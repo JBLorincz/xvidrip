@@ -2,12 +2,12 @@ let puppeteer = require("puppeteer");
 const fs = require('fs');
 const { program } = require('commander');
 const path = require('path');
-
+const os = require('os');
 //initialize CMD arg structure
 program
   .argument("<source>", "the URL to the tweet or the ID of the tweet.")
-  .option("-v --verbose", "output extra information",false)
-  .option("-h --with-head", "run xvidrip not headlessly",false)
+  .option("-v --verbose", "output extra information", false)
+  .option("-h --with-head", "run xvidrip not headlessly", false)
   .argument("[destination]", "the path and filename of the output file")
   .parse(process.argv);
 
@@ -28,7 +28,7 @@ let userId = sourceInput.match(/\d+$/);
 verbose_print(`User id is: ${userId}`);
 
 let embedUrl = `https://platform.twitter.com/embed/Tweet.html?id=${userId}`;
-  
+
 
 console.log(sourceInput);
 
@@ -89,9 +89,10 @@ console.log(sourceInput);
 
   let body = await fetchResponse.json();
 
-  console.log(body);
+
+  verbose_print(body);
   let variantArray = body.video.variants;
-  
+
 
   let mp4Url = identifyBestVariant(variantArray);
 
@@ -99,8 +100,12 @@ console.log(sourceInput);
 
   let mp4AsBuffer = new Buffer(await (await (await fetch(mp4Url)).blob()).arrayBuffer());
 
-  let fullPath = resolveDownloadPath(userDestination); 
-
+  let fullPath = resolveDownloadPath(userDestination);
+  if (!fs.existsSync(path.dirname(fullPath))) {
+    {
+      fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+    }
+  }
   fs.writeFileSync(fullPath, mp4AsBuffer, (err) => { console.error(err) });
 
   console.log(`Downloaded to ${fullPath}`);
@@ -109,55 +114,62 @@ console.log(sourceInput);
 })();
 
 
-function resolveDownloadPath(userDestination)
-{
+function resolveDownloadPath(userDestination) {
   let dirName = __dirname;
   let fileName = "video";
   let extName = ".mp4";
-  if(userDestination)
-  {
+  if (userDestination) {
     dirName = path.dirname(userDestination);
-    fileName = path.basename(userDestination);
     extName = path.extname(userDestination);
+    fileName = path.basename(userDestination, extName);
 
-    if(extName != ".mp4")
-    {
+    if (extName != ".mp4") {
       console.warn("Warning: Specified an output file that's not an mp4. xvidrip can only download mp4 files. Please change the output file to an mp4 afterwards.");
     }
   }
+  dirName = untildify(dirName);
   let baseFilename = fileName;
   //check if file exist, if it does add a number to end until one doesn't
   let int_modifier = 0;
   let break_loop = false;
-do
-{
-  fullPath = path.join(dirName,fileName + extName);
-  let doesFileExist = fs.existsSync(fullPath);
-  if (!doesFileExist) {
-    fullPath = path.join(dirName,fileName+extName);
-    console.log(`Downloading video to: ${fullPath}`);
-    break_loop = true;
-  } else {
-    int_modifier++;
-    fileName = baseFilename+"_"+int_modifier;
-    console.warn(`Checking if ${fileName} exists already...`);
-  }
-} while(!break_loop);
+  do {
+    fullPath = path.join(dirName, fileName + extName);
+    let doesFileExist = fs.existsSync(fullPath);
+    if (!doesFileExist) {
+      fullPath = path.join(dirName, fileName + extName);
+      break_loop = true;
+    } else {
+      int_modifier++;
+      fileName = baseFilename + "_" + int_modifier;
+      if (programOptions.verbose) {
+        console.warn(`Checking if ${fileName} exists already...`);
+      }
+    }
+  } while (!break_loop);
 
-return fullPath;
+  return fullPath;
 }
 
 
-function identifyBestVariant(variantArray)
-{
+function identifyBestVariant(variantArray) {
   let filtered_variant_array = new Array();
-  for(let x of variantArray)
-  {
-    if(x.src.includes("mp4") && x.type=="video/mp4")
-    {
+  for (let x of variantArray) {
+    if (x.src.includes("mp4") && x.type == "video/mp4") {
       filtered_variant_array.push(x);
-    } 
+    }
   }
   let mp4Url = filtered_variant_array[0].src;
   return mp4Url;
+}
+
+
+
+const homeDirectory = os.homedir();
+
+function untildify(pathWithTilde) {
+  if (typeof pathWithTilde !== 'string') {
+    throw new TypeError(`Expected a string, got ${typeof pathWithTilde}`);
+  }
+
+  return homeDirectory ? pathWithTilde.replace(/^~(?=$|\/|\\)/, homeDirectory) : pathWithTilde;
 }
