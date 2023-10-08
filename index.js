@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+
 let puppeteer = require("puppeteer");
 const fs = require('fs');
 const { program } = require('commander');
