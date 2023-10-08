@@ -3,11 +3,14 @@ const fs = require('fs');
 const { program } = require('commander');
 const path = require('path');
 const os = require('os');
+const AsyncRetry = require("async-retry");
+const { setTimeout } = require("timers/promises");
 //initialize CMD arg structure
 program
   .argument("<source>", "the URL to the tweet or the ID of the tweet.")
   .option("-v --verbose", "output extra information", false)
-  .option("-h --with-head", "run xvidrip not headlessly", false)
+  .option("-s --silent", "removes all stdout output, overriding other flags", false)
+  .option("-h --with-head", "run xvidrip with a head", false)
   .argument("[destination]", "the path and filename of the output file")
   .parse(process.argv);
 
@@ -15,9 +18,15 @@ let programArgs = program.args;
 let programOptions = program.opts();
 
 function verbose_print(strToPrint) {
+  if(programOptions.silent) return;
   if (programOptions.verbose) {
     console.log(strToPrint);
   }
+}
+function print(strToPrint)
+{
+ if(programOptions.silent) return;
+    console.log(strToPrint);
 }
 
 let sourceInput = programArgs[0];
@@ -30,11 +39,51 @@ verbose_print(`User id is: ${userId}`);
 let embedUrl = `https://platform.twitter.com/embed/Tweet.html?id=${userId}`;
 
 
-console.log(sourceInput);
+verbose_print(sourceInput);
 
 
 (async () => {
-  // Launch the browser and open a new blank page
+  
+  let fetchResponse;
+  await AsyncRetry(async(bail) => {
+
+    fetchResponse = await getTweetResult();
+  },
+  {retries: 5, onRetry: () => {print("Retrying...")}}
+  );
+
+  print("Converting tweet result to JSON...");
+  let body = await fetchResponse.json();
+
+
+  verbose_print(body);
+  let variantArray = body.video.variants;
+
+
+  let mp4Url = identifyBestVariant(variantArray);
+
+  //todo: find right source to download in the variant_array
+
+  let mp4AsBuffer = await downloadMp4(mp4Url);
+
+  let fullPath = resolveDownloadPath(userDestination);
+
+  if (!fs.existsSync(path.dirname(fullPath))) {
+    {
+      fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+    }
+  }
+  fs.writeFileSync(fullPath, mp4AsBuffer, (err) => { console.error(err) });
+
+  print(`Downloaded to ${fullPath}`);
+  process.exit(0);
+})();
+
+//We only need puppeteer for this part.
+async function getTweetResult()
+{
+  print("Opening puppeteer...");
+// Launch the browser and open a new blank page
   let config = {
     // Whether chrome should simulate
     // the absence of connectivity
@@ -53,16 +102,6 @@ console.log(sourceInput);
 
   await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.97 Safari/537.36');
 
-  // attach cdp session to page
-  const client = await page.target().createCDPSession();
-  await client.send('Debugger.enable');
-  await client.send('Debugger.setAsyncCallStackDepth', { maxDepth: 32 });
-
-  // enable network
-  await client.send('Network.enable');
-
-  // Enable request interception
-
   let myTweetResult = null;
 
   await page.setRequestInterception(true);
@@ -77,44 +116,32 @@ console.log(sourceInput);
   page.on("response", (response) => {
     let url = response.url();
     verbose_print(`Intercepted response: ${url}`);
-    if (url.includes("https://cdn.syndication.twimg.com/tweet-result")) {
-    }
   });
+   
 
+  let error_object = null;
+
+   const timer = setTimeout(() => {
+  }, 3000);
+  timer.then(() => {error_object = new Error("Timed out!");})
+  //start the process by going to the embed page.
   await page.goto(embedUrl);
+
   while (myTweetResult == null) {
-
-  }
-  let fetchResponse = await myTweetResult;
-
-  let body = await fetchResponse.json();
-
-
-  verbose_print(body);
-  let variantArray = body.video.variants;
-
-
-  let mp4Url = identifyBestVariant(variantArray);
-
-  //todo: find right source to download in the variant_array
-
-  let mp4AsBuffer = new Buffer(await (await (await fetch(mp4Url)).blob()).arrayBuffer());
-
-  let fullPath = resolveDownloadPath(userDestination);
-  if (!fs.existsSync(path.dirname(fullPath))) {
+    if(error_object)
     {
-      fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+
+      browser.close();
+      throw error_object;
     }
   }
-  fs.writeFileSync(fullPath, mp4AsBuffer, (err) => { console.error(err) });
-
-  console.log(`Downloaded to ${fullPath}`);
+  clearTimeout(timer);
   browser.close();
-  process.exit(0);
-})();
-
+  return myTweetResult;
+}
 
 function resolveDownloadPath(userDestination) {
+  print("Resolving download path...");
   let dirName = __dirname;
   let fileName = "video";
   let extName = ".mp4";
@@ -152,6 +179,7 @@ function resolveDownloadPath(userDestination) {
 
 
 function identifyBestVariant(variantArray) {
+  verbose_print("Identifying best variant...");
   let filtered_variant_array = new Array();
   for (let x of variantArray) {
     if (x.src.includes("mp4") && x.type == "video/mp4") {
@@ -159,10 +187,15 @@ function identifyBestVariant(variantArray) {
     }
   }
   let mp4Url = filtered_variant_array[0].src;
+  verbose_print(`Best variant identified: ${mp4Url}`);
   return mp4Url;
 }
 
-
+async function downloadMp4(mp4Url)
+{
+  print(`Downloading mp4 from '${mp4Url}'...`);
+   return new Buffer(await (await (await fetch(mp4Url)).blob()).arrayBuffer());
+}
 
 const homeDirectory = os.homedir();
 
