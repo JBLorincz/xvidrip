@@ -5,6 +5,7 @@ const fs = require('fs');
 const { program } = require('commander');
 const path = require('path');
 const os = require('os');
+const axios = require('axios');
 const AsyncRetry = require("async-retry");
 const { setTimeout } = require("timers/promises");
 //initialize CMD arg structure
@@ -55,11 +56,11 @@ verbose_print(sourceInput);
   );
 
   print("Converting tweet result to JSON...");
-  let body = await fetchResponse.json();
+  let body = await fetchResponse;
 
 
   verbose_print(body);
-  let variantArray = body.video.variants;
+  let variantArray = body.data.video.variants;
 
 
   let mp4Url = identifyBestVariant(variantArray);
@@ -110,7 +111,7 @@ async function getTweetResult()
   page.on("request", (interceptedRequest) => {
     verbose_print(`Intercepted request: ${interceptedRequest.method()} ${interceptedRequest.url()}`);
     if (interceptedRequest.url().includes("https://cdn.syndication.twimg.com/tweet-result")) {
-      myTweetResult = fetch(interceptedRequest.url());
+      myTweetResult = axios.get(interceptedRequest.url());
     }
     interceptedRequest.continue();
   });
@@ -196,7 +197,10 @@ function identifyBestVariant(variantArray) {
 async function downloadMp4(mp4Url)
 {
   print(`Downloading mp4 from '${mp4Url}'...`);
-   return new Buffer(await (await (await fetch(mp4Url)).blob()).arrayBuffer());
+  let arrayBuffer =  await axios(mp4Url, {
+    responseType: 'arraybuffer'
+  }); 
+  return Buffer.from(arrayBuffer.data);
 }
 
 const homeDirectory = os.homedir();
